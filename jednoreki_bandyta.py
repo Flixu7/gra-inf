@@ -20,7 +20,7 @@ import math
 import os
 import sys
 import random
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Dict, List, Tuple, Optional
 
 import pygame
@@ -62,7 +62,12 @@ class Config:
     BIG_WIN_MULTIPLIER: int = 50
 
     # Jackpot start values
-    JACKPOT_START: Dict[str, int] = None  # assigned below
+    JACKPOT_START: Dict[str, int] = field(default_factory=lambda: {
+        "mini": 500,
+        "minor": 2500,
+        "major": 10000,
+        "grand": 50000,
+    })
 
     # Auto-spin behavior
     AUTO_STOP_ON_BIG_WIN: bool = True
@@ -84,12 +89,6 @@ class Config:
     IMAGE_DIR: str = "assets/images"
 
 
-Config.JACKPOT_START = {
-    "mini": 500,
-    "minor": 2500,
-    "major": 10000,
-    "grand": 50000,
-}
 
 
 @dataclass(frozen=True)
@@ -647,8 +646,13 @@ class Game:
         self.show_help = not self.show_help
 
     def toggle_gamble(self) -> None:
-        if self.last_win > 0 and not self.spin_in_progress:
-            self.show_gamble = not self.show_gamble
+        if self.spin_in_progress:
+            return
+        if self.show_gamble:
+            self.gamble_collect()
+            return
+        if self.pending_gamble > 0:
+            self.show_gamble = True
 
     def volume_up(self) -> None:
         self.sound.set_volume(self.sound.volume + 0.1)
@@ -663,6 +667,9 @@ class Game:
     def try_spin(self) -> None:
         if self.spin_in_progress or self.show_paytable or self.show_help or self.show_gamble:
             return
+
+        if self.pending_gamble > 0:
+            self.collect_pending_win()
 
         bet = self.config.BET_LEVELS[self.bet_index]
         if self.free_spins_left <= 0 and self.credits < bet:
@@ -721,7 +728,6 @@ class Game:
             total_win += value
 
         if total_win > 0:
-            self.credits += total_win
             self.last_win = total_win
             self.pending_gamble = total_win
             self.win_counter.set(total_win)
@@ -764,19 +770,23 @@ class Game:
             return
         self.sound.play("gamble")
         if self.rng.random() < 0.5:
-            self.credits += self.pending_gamble
             self.pending_gamble *= 2
             self.last_win = self.pending_gamble
             self.win_counter.set(self.last_win)
         else:
-            self.credits -= self.pending_gamble
             self.pending_gamble = 0
             self.last_win = 0
             self.win_counter.set(0)
             self.show_gamble = False
 
     def gamble_collect(self) -> None:
+        self.collect_pending_win()
         self.show_gamble = False
+
+    def collect_pending_win(self) -> None:
+        if self.pending_gamble > 0:
+            self.credits += self.pending_gamble
+            self.pending_gamble = 0
 
     # ---------- Game Loop ----------
 
@@ -815,6 +825,12 @@ class Game:
                     if event.key == pygame.K_d:
                         self.gamble_double()
                     elif event.key == pygame.K_c:
+                        self.gamble_collect()
+                if event.type == pygame.MOUSEBUTTONUP and event.button == 1:
+                    _, double_rect, collect_rect = self.get_gamble_rects()
+                    if double_rect.collidepoint(event.pos):
+                        self.gamble_double()
+                    elif collect_rect.collidepoint(event.pos):
                         self.gamble_collect()
 
     def update(self, dt: float) -> None:
@@ -1028,7 +1044,7 @@ class Game:
         overlay = pygame.Surface((self.config.WIDTH, self.config.HEIGHT), pygame.SRCALPHA)
         overlay.fill((0, 0, 0, 180))
         surface.blit(overlay, (0, 0))
-        panel = pygame.Rect(320, 200, 640, 320)
+        panel, double_rect, collect_rect = self.get_gamble_rects()
         pygame.draw.rect(surface, (30, 20, 30), panel, border_radius=20)
         pygame.draw.rect(surface, self.config.NEON_MAGENTA, panel, 2, border_radius=20)
 
@@ -1039,8 +1055,6 @@ class Game:
         surface.blit(info, (panel.x + 30, panel.y + 90))
 
         # Buttons inside overlay
-        double_rect = pygame.Rect(panel.x + 60, panel.y + 160, 200, 50)
-        collect_rect = pygame.Rect(panel.x + 360, panel.y + 160, 200, 50)
         pygame.draw.rect(surface, (50, 80, 70), double_rect, border_radius=10)
         pygame.draw.rect(surface, (70, 50, 50), collect_rect, border_radius=10)
         pygame.draw.rect(surface, self.config.NEON_GREEN, double_rect, 2, border_radius=10)
@@ -1051,13 +1065,11 @@ class Game:
         surface.blit(double_text, double_text.get_rect(center=double_rect.center))
         surface.blit(collect_text, collect_text.get_rect(center=collect_rect.center))
 
-        # Mouse click handling for overlay buttons
-        mouse_pressed = pygame.mouse.get_pressed()[0]
-        if mouse_pressed:
-            if double_rect.collidepoint(pygame.mouse.get_pos()):
-                self.gamble_double()
-            elif collect_rect.collidepoint(pygame.mouse.get_pos()):
-                self.gamble_collect()
+    def get_gamble_rects(self) -> Tuple[pygame.Rect, pygame.Rect, pygame.Rect]:
+        panel = pygame.Rect(320, 200, 640, 320)
+        double_rect = pygame.Rect(panel.x + 60, panel.y + 160, 200, 50)
+        collect_rect = pygame.Rect(panel.x + 360, panel.y + 160, 200, 50)
+        return panel, double_rect, collect_rect
 
 
 if __name__ == "__main__":
