@@ -25,6 +25,9 @@ from typing import Dict, List, Tuple, Optional
 
 import pygame
 
+WILD_SYMBOL = "WILD"
+SCATTER_SYMBOL = "SCATTER"
+
 
 # ============================
 # Konfiguracja / Configuration
@@ -54,8 +57,8 @@ class Config:
     FREE_SPINS_MULTIPLIER: int = 3
 
     # Wild / Scatter
-    WILD: str = "WILD"
-    SCATTER: str = "SCATTER"
+    WILD: str = WILD_SYMBOL
+    SCATTER: str = SCATTER_SYMBOL
     WILD_MULTIPLIER: int = 2
 
     # Win presentation
@@ -67,6 +70,12 @@ class Config:
         "minor": 2500,
         "major": 10000,
         "grand": 50000,
+    })
+    JACKPOT_CAPS: Dict[str, int] = field(default_factory=lambda: {
+        "mini": 20000,
+        "minor": 100000,
+        "major": 500000,
+        "grand": 2000000,
     })
 
     # Auto-spin behavior
@@ -81,6 +90,8 @@ class Config:
     NEON_GOLD: Tuple[int, int, int] = (255, 202, 80)
     NEON_GREEN: Tuple[int, int, int] = (90, 255, 160)
     GLASS: Tuple[int, int, int] = (30, 35, 50)
+    SHAKE_X: int = 6
+    SHAKE_Y: int = 4
 
     # Paths (placeholders)
     ASSETS_DIR: str = "assets"
@@ -109,8 +120,8 @@ SYMBOLS: List[SymbolDef] = [
     SymbolDef("BAR", 10, (220, 220, 220)),
     SymbolDef("7", 8, (255, 60, 60)),
     SymbolDef("💎", 6, (80, 210, 255)),
-    SymbolDef("WILD", 4, (255, 80, 210)),
-    SymbolDef("SCATTER", 4, (180, 255, 180)),
+    SymbolDef(WILD_SYMBOL, 4, (255, 80, 210)),
+    SymbolDef(SCATTER_SYMBOL, 4, (180, 255, 180)),
 ]
 
 
@@ -235,6 +246,7 @@ class Button:
             if self.hover:
                 self.pressed = True
         elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
+            self.hover = self.rect.collidepoint(event.pos)
             if self.pressed and self.hover:
                 self.callback()
             self.pressed = False
@@ -463,17 +475,23 @@ class Jackpot:
         self.values["minor"] += bet * 0.01
         self.values["major"] += bet * 0.004
         self.values["grand"] += bet * 0.001
+        for tier, cap in self.config.JACKPOT_CAPS.items():
+            self.values[tier] = min(self.values[tier], cap)
 
     def try_trigger(self) -> Optional[Tuple[str, int]]:
         # Niewielka szansa na wygraną jackpotu.
         roll = self.rng.random()
-        if roll < 0.0002:
+        grand_threshold = 0.0002
+        major_threshold = grand_threshold + 0.0008
+        minor_threshold = major_threshold + 0.004
+        mini_threshold = minor_threshold + 0.01
+        if roll < grand_threshold:
             tier = "grand"
-        elif roll < 0.001:
+        elif roll < major_threshold:
             tier = "major"
-        elif roll < 0.005:
+        elif roll < minor_threshold:
             tier = "minor"
-        elif roll < 0.015:
+        elif roll < mini_threshold:
             tier = "mini"
         else:
             return None
@@ -879,7 +897,10 @@ class Game:
     def draw(self) -> None:
         offset = pygame.Vector2(0, 0)
         if self.shake_timer > 0:
-            offset = pygame.Vector2(self.rng.uniform(-6, 6), self.rng.uniform(-4, 4))
+            offset = pygame.Vector2(
+                self.rng.uniform(-self.config.SHAKE_X, self.config.SHAKE_X),
+                self.rng.uniform(-self.config.SHAKE_Y, self.config.SHAKE_Y),
+            )
 
         frame = pygame.Surface((self.config.WIDTH, self.config.HEIGHT), pygame.SRCALPHA)
         frame.blit(self.background, (0, 0))
@@ -1008,7 +1029,7 @@ class Game:
 
         extra = [
             f"3x {self.config.WILD} = x{self.config.WILD_MULTIPLIER} highest win",
-            "SCATTER x3+ anywhere -> 12 Free Spins x3",
+            "SCATTER x3+ anywhere -> 12 Free Spins (x3 multiplier)",
             "Paylines: top, middle, bottom",
         ]
         y += 10
@@ -1029,7 +1050,7 @@ class Game:
             "HELP / RULES",
             "SPACE = Spin, ESC = Quit, F = Fullscreen",
             "WILD substitutes for all except SCATTER",
-            "SCATTER x3+ anywhere -> Free Spins x3",
+            "SCATTER x3+ anywhere -> 12 Free Spins (x3 multiplier)",
             "Gamble: press D to double, C to collect",
             "Auto-spin stops on big win or bonus",
         ]
